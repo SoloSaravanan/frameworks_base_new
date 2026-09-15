@@ -517,7 +517,7 @@
     <!--Shade of the Neutral Variant system color at 40% perceptual luminance (L* in L*a*b* color space). This value can be overlaid at runtime by OverlayManager RROs.-->
     <color name="system_neutral2_600_dark">#5C5E67</color>
     <!--Shade of the Neutral Variant system color at 30% perceptual luminance (L* in L*a*b* color space). This value can be overlaid at runtime by OverlayManager RROs.-->
-    <color name="system_neutral2_700_dark">#44464F</color>
+    <color name="system_neutral2_700_dark">#000000</color>
     <!--Shade of the Neutral Variant system color at 20% perceptual luminance (L* in L*a*b* color space). This value can be overlaid at runtime by OverlayManager RROs.-->
     <color name="system_neutral2_800_dark">#2E3038</color>
     <!--Shade of the Neutral Variant system color at 10% perceptual luminance (L* in L*a*b* color space). This value can be overlaid at runtime by OverlayManager RROs.-->
