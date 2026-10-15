@@ -17,12 +17,14 @@
 
 package com.android.server.spoof;
 
+import android.app.ActivityManager;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Process;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.Log;
@@ -88,8 +90,11 @@ public class AxSpoofManager implements IAxSpoofManager {
                 if (uri == null) return;
                 final String last = uri.getLastPathSegment();
                 if (last == null) return;
-                refreshKey(last);
+                boolean changed = refreshKey(last);
                 Log.i(TAG, "Spoof config refreshed: " + last);
+                if (changed && Settings.Secure.SPOOF_PIF_CONFIG.equals(last)) {
+                    restartPifTargets();
+                }
             }
         };
         for (String key : WATCHED_KEYS) {
@@ -101,15 +106,17 @@ public class AxSpoofManager implements IAxSpoofManager {
         Log.i(TAG, "AxSpoofManager ready");
     }
 
-    private void refreshKey(String key) {
-        if (mResolver == null) return;
+    private boolean refreshKey(String key) {
+        if (mResolver == null) return false;
         final String value = Settings.Secure.getStringForUser(
                 mResolver, key, UserHandle.USER_SYSTEM);
+        final String previous;
         if (value == null) {
-            mCache.remove(key);
+            previous = mCache.remove(key);
         } else {
-            mCache.put(key, value);
+            previous = mCache.put(key, value);
         }
+        return !java.util.Objects.equals(previous, value);
     }
 
     private void migrateFlagKeysIfNeeded() {
@@ -180,6 +187,32 @@ public class AxSpoofManager implements IAxSpoofManager {
         boolean b = "1".equals(blobValue) || "true".equalsIgnoreCase(blobValue);
         Settings.Secure.putStringForUser(mResolver, secureKey, String.valueOf(b), UserHandle.USER_SYSTEM);
         return true;
+    }
+
+    private void restartPifTargets() {
+        if (mContext == null) return;
+        try {
+            ActivityManager am = mContext.getSystemService(ActivityManager.class);
+            if (am == null) return;
+
+            // forceStopPackage stops Play Store and its processes. Don't kill its process again
+            // below; only restart the GMS DroidGuard process that consumes the updated config.
+            am.forceStopPackage("com.android.vending");
+
+            java.util.List<ActivityManager.RunningAppProcessInfo> processes =
+                    am.getRunningAppProcesses();
+            if (processes == null) return;
+            for (ActivityManager.RunningAppProcessInfo proc : processes) {
+                if (proc.pid > 0
+                        && "com.google.android.gms.unstable".equals(proc.processName)) {
+                    Log.i(TAG, "Restarting PIF target process " + proc.processName
+                            + " (pid=" + proc.pid + ")");
+                    Process.killProcess(proc.pid);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to restart PIF target processes", e);
+        }
     }
 
     private String getCached(String key) {
