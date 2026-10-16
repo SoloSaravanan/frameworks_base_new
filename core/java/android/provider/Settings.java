@@ -22344,8 +22344,6 @@ public final class Settings {
         public static final String RESTRICTED_NETWORKING_MODE = "restricted_networking_mode";
 
         /**
-
-        /**
          * Control whether to hide screen capture status from apps.
          * @hide
          */
