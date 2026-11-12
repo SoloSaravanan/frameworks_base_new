@@ -136,6 +136,6 @@ public class CPUInfoTile extends QSTileImpl<BooleanState> {
 
     @Override
     public void handleSetListening(boolean listening) {
-        // Do nothing
+        mSetting.setListening(listening);
     }
 }

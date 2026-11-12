@@ -23,6 +23,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -63,6 +64,8 @@ class CPUInfoService @Inject constructor(
     private var cpuDisplayString = ""
 
     private val fileMap = mutableMapOf<String, RandomAccessFile>()
+    private val fileRetryAfter = mutableMapOf<String, Long>()
+    private val unavailablePaths = mutableSetOf<String>()
 
     private val layoutParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -96,23 +99,14 @@ class CPUInfoService @Inject constructor(
         layoutParams.y = getTopInset()
 
         cpuTempDivider = resources.getInteger(R.integer.config_cpuTempDivider)
+        if (cpuTempDivider <= 0) {
+            Log.w(TAG, "Invalid CPU temperature divider ($cpuTempDivider); using 1")
+            cpuTempDivider = 1
+        }
         cpuTempSensor = getString(R.string.config_cpuTempSensor)
         cpuDisplayString = getString(R.string.config_displayCpus)
 
         cpuList = parseCpuList(cpuDisplayString)
-
-        try {
-            fileMap[cpuTempSensor] = RandomAccessFile(cpuTempSensor, "r")
-            cpuList.forEach { cpu ->
-                val freqPath = "/sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_cur_freq"
-                val govPath = "/sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_governor"
-                fileMap[freqPath] = RandomAccessFile(freqPath, "r")
-                fileMap[govPath] = RandomAccessFile(govPath, "r")
-            }
-        } catch (e: IOException) {
-            Log.e(TAG, "Error preloading CPU sysfs nodes: ${e.message}")
-            stopSelf()
-        }
 
         cpuInfoView = TextView(this).apply {
             setBackgroundColor(ColorUtils.setAlphaComponent(Color.BLACK, BACKGROUND_ALPHA))
@@ -174,18 +168,22 @@ class CPUInfoService @Inject constructor(
         readJob = coroutineScope.launch {
             while (isActive) {
                 val builder = StringBuilder()
-                val temp = readLineFromRandomAccessFile(cpuTempSensor)?.toIntOrNull()?.div(cpuTempDivider) ?: 0
-                builder.append("Temp: ${temp}°C\n")
+                val temp = if (cpuTempSensor.isNotBlank()) {
+                    readLineFromRandomAccessFile(cpuTempSensor)?.toIntOrNull()?.div(cpuTempDivider)
+                } else {
+                    null
+                }
+                builder.append(temp?.let { "Temp: ${it}°C\n" } ?: "Temp: N/A\n")
 
                 cpuList.forEach { cpu ->
                     val freqPath = "/sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_cur_freq"
                     val govPath = "/sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_governor"
-                    val freq = readLineFromRandomAccessFile(freqPath)?.toIntOrNull()?.div(1000) ?: 0
+                    val freq = readLineFromRandomAccessFile(freqPath)?.toIntOrNull()
                     val gov = readLineFromRandomAccessFile(govPath) ?: "N/A"
-                    if (freq > 0) {
-                        builder.append("cpu$cpu: $gov ${freq}MHz\n")
-                    } else {
-                        builder.append("cpu$cpu: offline\n")
+                    when {
+                        freq == null -> builder.append("cpu$cpu: unavailable\n")
+                        freq <= 0 -> builder.append("cpu$cpu: offline\n")
+                        else -> builder.append("cpu$cpu: $gov ${freq / 1000}MHz\n")
                     }
                 }
 
@@ -212,13 +210,45 @@ class CPUInfoService @Inject constructor(
     }
 
     private fun readLineFromRandomAccessFile(path: String): String? {
-        val file = fileMap[path] ?: return null
+        if (path.isBlank()) return null
+
+        val now = SystemClock.elapsedRealtime()
+        val file = fileMap[path] ?: run {
+            if (now < (fileRetryAfter[path] ?: 0L)) return null
+            try {
+                RandomAccessFile(path, "r").also {
+                    fileMap[path] = it
+                    fileRetryAfter.remove(path)
+                    unavailablePaths.remove(path)
+                }
+            } catch (e: IOException) {
+                markPathUnavailable(path, now, e)
+                return null
+            } catch (e: SecurityException) {
+                markPathUnavailable(path, now, e)
+                return null
+            }
+        }
         return try {
             file.seek(0L)
-            file.readLine()
+            file.readLine().also {
+                unavailablePaths.remove(path)
+            }
         } catch (e: IOException) {
-            Log.e(TAG, "Failed to read from $path: ${e.message}")
+            fileMap.remove(path)?.let {
+                try {
+                    it.close()
+                } catch (_: IOException) {}
+            }
+            markPathUnavailable(path, now, e)
             null
+        }
+    }
+
+    private fun markPathUnavailable(path: String, now: Long, error: Exception) {
+        fileRetryAfter[path] = now + NODE_RETRY_INTERVAL
+        if (unavailablePaths.add(path)) {
+            Log.w(TAG, "CPU info node unavailable: $path", error)
         }
     }
 
@@ -242,6 +272,7 @@ class CPUInfoService @Inject constructor(
     private companion object {
         private const val TAG = "CPUInfoService"
         private const val MEASURE_INTERVAL_DEFAULT = 1000L
+        private const val NODE_RETRY_INTERVAL = 5000L
         private const val BACKGROUND_ALPHA = 120
     }
 }
