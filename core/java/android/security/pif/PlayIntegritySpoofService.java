@@ -69,12 +69,24 @@ public final class PlayIntegritySpoofService {
     );
 
     private static final ArraySet<String> PRIV_PKGS = new ArraySet<>();
+    private static final ArraySet<String> FEATURES_PIXEL_XL = new ArraySet<>();
     private static final ArraySet<String> FEATURES_PIXEL = new ArraySet<>();
     private static final ArraySet<String> FEATURES_PIXEL_OTHERS = new ArraySet<>();
     private static final ArraySet<String> FEATURES_TENSOR = new ArraySet<>();
     private static final ArraySet<String> FEATURES_NEXUS = new ArraySet<>();
 
     static {
+        // Feature flags exposed by the first-generation Pixel (Pixel XL / marlin).
+        Collections.addAll(FEATURES_PIXEL_XL,
+                "com.google.android.apps.photos.NEXUS_PRELOAD",
+                "com.google.android.apps.photos.nexus_preload",
+                "com.google.android.apps.photos.PIXEL_PRELOAD",
+                "com.google.android.apps.photos.PIXEL_2016_PRELOAD",
+                "com.google.android.feature.PIXEL_EXPERIENCE",
+                "com.google.android.feature.GOOGLE_BUILD",
+                "com.google.android.feature.GOOGLE_EXPERIENCE"
+        );
+
         Collections.addAll(FEATURES_PIXEL,
                 "com.google.android.apps.photos.PIXEL_2019_PRELOAD",
                 "com.google.android.apps.photos.PIXEL_2019_MIDYEAR_PRELOAD",
@@ -960,6 +972,7 @@ public final class PlayIntegritySpoofService {
         final String pkgName = ActivityThread.currentPackageName();
         if (pkgName != null && PRIV_PKGS.contains(pkgName)) {
             if (shouldSpoofPhotos(pkgName)) {
+                if (FEATURES_PIXEL_XL.contains(name)) return true;
                 if (FEATURES_PIXEL.contains(name)) return false;
                 if (FEATURES_PIXEL_OTHERS.contains(name)) return true;
                 if (FEATURES_TENSOR.contains(name)) return false;
