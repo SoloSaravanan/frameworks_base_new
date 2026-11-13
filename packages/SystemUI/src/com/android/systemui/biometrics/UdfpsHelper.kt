@@ -58,6 +58,7 @@ class UdfpsHelper(
 ) {
     private val displayManager = context.getSystemService(DisplayManager::class.java)!!
     private val isKeyguard = requestReason == REASON_AUTH_KEYGUARD
+    private var displayListenerRegistered = false
 
     private val currentBrightness: Float get() =
         displayManager.getBrightness(Display.DEFAULT_DISPLAY)
@@ -163,19 +164,37 @@ class UdfpsHelper(
     }
 
     fun addDimLayer() {
-        brightnessToAlpha()
-        windowManager.addView(view, dimLayoutParams)
-        displayManager.registerDisplayListener(
-            displayListener,
-            null,
-            DisplayManager.EVENT_TYPE_DISPLAY_BRIGHTNESS,
-        )
+        if (!view.isAttachedToWindow) {
+            brightnessToAlpha()
+            windowManager.addView(view, dimLayoutParams)
+        }
+
+        if (!displayListenerRegistered) {
+            displayManager.registerDisplayListener(
+                displayListener,
+                null,
+                DisplayManager.EVENT_TYPE_DISPLAY_BRIGHTNESS,
+            )
+            displayListenerRegistered = true
+        }
     }
 
     fun removeDimLayer() {
         alphaAnimator.cancel()
-        displayManager.unregisterDisplayListener(displayListener)
-        windowManager.removeView(view)
+        if (displayListenerRegistered) {
+            displayManager.unregisterDisplayListener(displayListener)
+            displayListenerRegistered = false
+        }
+
+        // The credential fallback can hide this overlay more than once. Avoid removing a
+        // dim window that another lifecycle callback has already detached.
+        if (view.isAttachedToWindow) {
+            try {
+                windowManager.removeView(view)
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Dim layer was detached before removal", e)
+            }
+        }
     }
 
     init {
